@@ -27247,17 +27247,116 @@ function requireCore () {
 var coreExports = requireCore();
 
 /**
- * Waits for a number of milliseconds.
- *
- * @param milliseconds The number of milliseconds to wait.
- * @returns Resolves with 'done!' after the wait is over.
+ * The type of VeraId credential.
  */
-async function wait(milliseconds) {
-    return new Promise((resolve) => {
-        if (isNaN(milliseconds))
-            throw new Error('milliseconds is not a number');
-        setTimeout(() => resolve('done!'), milliseconds);
-    });
+var CredentialType;
+(function (CredentialType) {
+    /**
+     * The credential is an organisation signature bundle.
+     */
+    CredentialType["ORG_SIGNATURE_BUNDLE"] = "application/vnd.veraid.signature-bundle";
+})(CredentialType || (CredentialType = {}));
+
+var version = "1.3.1";
+var packageJson = {
+	version: version};
+
+const USER_AGENT = `VeraId-Authority-Credential-JS/${packageJson.version}`;
+
+const MS_IN_SECOND = 1000;
+/**
+ * Base class for exchanging credentials for a VeraId credential.
+ */
+class Exchanger {
+    /**
+     * Exchange the credentials for a VeraId credential.
+     * @param vauthCredentialUrl The VeraId Authority endpoint to obtain the credential.
+     * @returns The credential if successful.
+     */
+    async exchange(vauthCredentialUrl, options = {}) {
+        const { initialCredentialTimeoutSeconds = 3, vauthCredentialTimeoutSeconds = 3 } = options;
+        const authHeader = await this.generateVauthAuthHeader(vauthCredentialUrl, initialCredentialTimeoutSeconds * MS_IN_SECOND);
+        const timeoutSignal = AbortSignal.timeout(vauthCredentialTimeoutSeconds * MS_IN_SECOND);
+        const response = await fetch(vauthCredentialUrl, {
+            headers: {
+                'Authorization': authHeader,
+                'User-Agent': USER_AGENT,
+            },
+            signal: timeoutSignal,
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch VeraId credential (HTTP ${response.status})`);
+        }
+        const contentType = response.headers.get('Content-Type');
+        if (contentType !== CredentialType.ORG_SIGNATURE_BUNDLE) {
+            throw new Error(`VeraId credential response has invalid content type (${contentType})`);
+        }
+        const credential = Buffer.from(await response.arrayBuffer());
+        return {
+            credential,
+            type: CredentialType.ORG_SIGNATURE_BUNDLE,
+        };
+    }
+}
+
+/**
+ * Base class for exchanging a JWT for a VeraId credential.
+ */
+class JwtExchanger extends Exchanger {
+    async generateVauthAuthHeader(vauthCredentialUrl, timeoutMs) {
+        const jwt = await this.fetchJwt(vauthCredentialUrl.toString(), timeoutMs);
+        return `Bearer ${jwt}`;
+    }
+}
+
+/* eslint-disable n/no-process-env */
+/**
+ * Exchanger of GitHub tokens for VeraId credentials.
+ */
+class GithubExchanger extends JwtExchanger {
+    requestUrl;
+    token;
+    /**
+     * Create a new GitHub exchanger.
+     * @param requestUrl The URL of the GitHub token endpoint (`ACTIONS_ID_TOKEN_REQUEST_URL`).
+     * @param token The GitHub token to use (`ACTIONS_ID_TOKEN_REQUEST_TOKEN`).
+     */
+    constructor(requestUrl, token) {
+        super();
+        this.requestUrl = requestUrl;
+        this.token = token;
+    }
+    /**
+     * Create a new GitHub exchanger from environment variables.
+     * @returns A new GitHub exchanger.
+     * @throws If `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is not set.
+     */
+    static initFromEnv() {
+        const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+        if (!requestUrl) {
+            throw new Error('ACTIONS_ID_TOKEN_REQUEST_URL must be set');
+        }
+        const token = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+        if (!token) {
+            throw new Error('ACTIONS_ID_TOKEN_REQUEST_TOKEN must be set');
+        }
+        return new GithubExchanger(requestUrl, token);
+    }
+    async fetchJwt(audience, timeoutMs) {
+        const url = `${this.requestUrl}&audience=${audience}`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'User-Agent': USER_AGENT,
+            },
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch JWT (HTTP ${response.status})`);
+        }
+        const { value } = await response.json();
+        return value;
+    }
 }
 
 /**
@@ -27267,27 +27366,20 @@ async function wait(milliseconds) {
  */
 async function run() {
     try {
-        const ms = coreExports.getInput('milliseconds');
-        // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-        coreExports.debug(`Waiting ${ms} milliseconds ...`);
-        // Log the current timestamp, wait, then log the new timestamp
-        coreExports.debug(new Date().toTimeString());
-        await wait(parseInt(ms, 10));
-        coreExports.debug(new Date().toTimeString());
-        // Set outputs for other workflow steps to use
-        coreExports.setOutput('time', new Date().toTimeString());
+        const exchangeUrl = new URL(coreExports.getInput('exchange-url'));
+        coreExports.debug('Initialising exchanger...');
+        const exchanger = GithubExchanger.initFromEnv();
+        coreExports.debug('Exchanging credentials...');
+        const { credential, type } = await exchanger.exchange(exchangeUrl);
+        coreExports.info(`Exchanged credentials (got "${type}")`);
+        coreExports.setOutput('credential', credential.toString('base64'));
+        coreExports.setOutput('type', type);
     }
     catch (error) {
-        // Fail the workflow run if an error occurs
-        if (error instanceof Error)
-            coreExports.setFailed(error.message);
+        coreExports.setFailed(error.message);
     }
 }
 
-/**
- * The entrypoint for the action. This file simply imports and runs the action's
- * main logic.
- */
 /* istanbul ignore next */
 run();
 //# sourceMappingURL=index.js.map
