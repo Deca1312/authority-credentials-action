@@ -1,5 +1,5 @@
 import * as core from '@actions/core'
-import { wait } from './wait.js'
+import { GithubExchanger } from '@veraid/authority-credentials'
 
 /**
  * The main function for the action.
@@ -8,20 +8,19 @@ import { wait } from './wait.js'
  */
 export async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
+    const exchangeUrl = new URL(core.getInput('exchange-url'))
 
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
+    core.debug('Initialising exchanger...')
+    const exchanger = GithubExchanger.initFromEnv()
 
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    core.debug('Exchanging credentials...')
+    const { credential, type } = await exchanger.exchange(exchangeUrl)
 
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
+    core.info(`Exchanged credentials (got "${type}")`)
+
+    core.setOutput('credential', credential.toString('base64'))
+    core.setOutput('type', type)
   } catch (error) {
-    // Fail the workflow run if an error occurs
-    if (error instanceof Error) core.setFailed(error.message)
+    core.setFailed((error as Error).message)
   }
 }
