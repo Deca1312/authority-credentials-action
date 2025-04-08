@@ -41,6 +41,12 @@ jobs:
 
 ## Development
 
+### Contributions
+
+We love contributions! If you haven't contributed to a Relaycorp project before, please take a minute to [read our guidelines](https://github.com/relaycorp/.github/blob/master/CONTRIBUTING.md) first.
+
+Issues are tracked on the [`VLIB` project on Jira](https://relaycorp.atlassian.net/browse/VLIB) (component: `Credentials GH Action`).
+
 ### Publishing a New Release
 
 This project includes a helper script, [`script/release`](./script/release)
